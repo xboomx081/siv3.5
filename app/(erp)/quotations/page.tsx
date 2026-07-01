@@ -6,6 +6,7 @@ import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight, UserPlus, CreditCard, DollarSign, CircleCheck as CheckCircle } from 'lucide-react';
 import type { Quotation, QuotationStatus, Customer, Product } from '@/lib/types';
+import ProductSearchInput from '@/components/ui/ProductSearchInput';
 
 const statusConfig: Record<QuotationStatus, { label: string; color: string; bg: string }> = {
   draft: { label: 'Draft', color: 'text-gray-600', bg: 'bg-gray-100' },
@@ -313,23 +314,42 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
     expiry_date: '',
     notes: '',
   });
-  const [items, setItems] = useState<{ product_id: string; quantity: number; unit_price: number; discount_percent: number }[]>([]);
+  const [items, setItems] = useState<{
+    product_id: string;
+    product_name: string;
+    product_sku: string;
+    quantity: number;
+    unit_price: number;
+    discount_percent: number;
+  }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
 
-  function addItem() {
-    setItems([...items, { product_id: '', quantity: 1, unit_price: 0, discount_percent: 0 }]);
+  function addProductToItems(product: any) {
+    const existingIndex = items.findIndex(i => i.product_id === product.id);
+    if (existingIndex >= 0) {
+      const updated = [...items];
+      updated[existingIndex] = { ...updated[existingIndex], quantity: updated[existingIndex].quantity + 1 };
+      setItems(updated);
+      return;
+    }
+    setItems(prev => [...prev, {
+      product_id: product.id,
+      product_name: product.name,
+      product_sku: product.sku,
+      quantity: 1,
+      unit_price: product.sale_price || 0,
+      discount_percent: 0,
+    }]);
   }
 
   function updateItem(index: number, field: string, value: any) {
     const updated = [...items];
-    if (field === 'product_id') {
-      const product = products.find(p => p.id === value);
-      updated[index] = { product_id: value, quantity: 1, unit_price: product?.sale_price || 0, discount_percent: 0 };
-    } else {
-      (updated[index] as any)[field] = value;
-    }
+    (updated[index] as any)[field] = field === 'quantity' ? (parseInt(value) || 1)
+      : field === 'unit_price' ? (parseFloat(value) || 0)
+      : field === 'discount_percent' ? Math.min(100, Math.max(0, parseFloat(value) || 0))
+      : value;
     setItems(updated);
   }
 
@@ -338,10 +358,7 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
   }
 
   const subtotal = items.reduce((sum, item) => {
-    const product = products.find(p => p.id === item.product_id);
-    const price = item.unit_price || product?.sale_price || 0;
-    const discount = (price * item.quantity * item.discount_percent) / 100;
-    return sum + (item.quantity * price - discount);
+    return sum + (item.quantity * item.unit_price * (1 - item.discount_percent / 100));
   }, 0);
 
   async function handleSave(e: React.FormEvent) {
@@ -374,17 +391,15 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
     if (quoteError) { setError(quoteError.message); setSaving(false); return; }
 
     const quoteItems = items.map(item => {
-      const product = products.find(p => p.id === item.product_id);
-      const price = item.unit_price || product?.sale_price || 0;
-      const discount = (price * item.quantity * item.discount_percent) / 100;
+      const discount = (item.unit_price * item.quantity * item.discount_percent) / 100;
       return {
         quotation_id: quote.id,
         product_id: item.product_id,
         quantity: item.quantity,
-        unit_price: price,
+        unit_price: item.unit_price,
         discount_percent: item.discount_percent,
         tax_rate: 0,
-        subtotal: item.quantity * price - discount,
+        subtotal: item.quantity * item.unit_price - discount,
       };
     });
 
@@ -438,8 +453,15 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-medium">Line Items</label>
-                <button type="button" onClick={addItem} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ Add Item</button>
+                {items.length > 0 && <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? 's' : ''}</span>}
               </div>
+              <ProductSearchInput
+                onSelect={addProductToItems}
+                showStock
+                placeholder="Search and add products..."
+                className="mb-3"
+              />
+              {items.length > 0 && (
               <div className="border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
                   <thead className="bg-muted/40">
@@ -453,24 +475,20 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {items.length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added</td></tr>
-                    ) : items.map((item, index) => (
+                    {items.map((item, index) => (
                       <tr key={index}>
                         <td className="px-3 py-2">
-                          <select value={item.product_id} onChange={e => updateItem(index, 'product_id', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm focus:outline-none">
-                            <option value="">Select product</option>
-                            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
+                          <p className="text-sm font-medium text-foreground">{item.product_name}</p>
+                          <p className="text-[10px] text-muted-foreground">{item.product_sku}</p>
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="1" value={item.quantity} onChange={e => updateItem(index, 'quantity', parseInt(e.target.value) || 1)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                          <input type="number" min="1" value={item.quantity} onChange={e => updateItem(index, 'quantity', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                          <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, 'unit_price', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(index, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                          <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(index, 'discount_percent', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
                         </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold">{formatCurrency(item.quantity * item.unit_price * (1 - item.discount_percent / 100))}</td>
                         <td className="px-2 py-2">
@@ -481,6 +499,7 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
 
             <div className="flex justify-end bg-muted/30 rounded-lg p-3">

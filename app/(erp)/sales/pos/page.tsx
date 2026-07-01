@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Receipt, ChevronDown, Camera, UserPlus } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Camera, UserPlus } from 'lucide-react';
 import type { ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 
@@ -58,21 +58,34 @@ export default function POSPage() {
   const [unitSelectorProduct, setUnitSelectorProduct] = useState<ProductData | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    loadProducts();
+    loadProducts('');
     loadCustomers();
   }, []);
 
-  async function loadProducts() {
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => loadProducts(search), 250);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [search]);
+
+  async function loadProducts(q: string) {
     setLoading(true);
-    const { data } = await supabase
+    let query = supabase
       .from('products')
       .select(`id, name, sku, sale_price, cost_price, image_url, unit, base_unit, enable_multi_unit,
         inventory_items(id, warehouse_id, quantity_on_hand),
         units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order)`)
       .eq('is_active', true)
-      .limit(100);
+      .order('name');
+
+    if (q.trim()) {
+      query = query.or(`name.ilike.%${q.trim()}%,sku.ilike.%${q.trim()}%`);
+    }
+
+    const { data } = await query.limit(60);
     setProducts((data || []) as ProductData[]);
     setLoading(false);
   }
@@ -86,9 +99,7 @@ export default function POSPage() {
     setCustomers(data || []);
   }
 
-  const filteredProducts = products.filter(p =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProducts = products;
 
   function getStockInBaseUnits(product: ProductData): number {
     return product.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) || 0;
@@ -261,7 +272,7 @@ export default function POSPage() {
       setSelectedCustomer(WALK_IN_CUSTOMER_ID);
       setOrderComplete(true);
       toast({ title: 'Success', description: `Order ${invoiceNumber} completed successfully` });
-      loadProducts();
+      loadProducts(search);
     } catch (error: any) {
       console.error('POS error:', error);
       toast({ title: 'Error', description: error.message || 'Failed to process order', variant: 'destructive' });
@@ -318,7 +329,9 @@ export default function POSPage() {
           {loading ? Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="bg-white rounded-xl border border-border p-3 animate-pulse"><div className="h-20 bg-muted rounded-lg mb-2" /><div className="h-3 bg-muted rounded mb-1" /><div className="h-3 bg-muted rounded w-2/3" /></div>
           )) : filteredProducts.length === 0 ? (
-            <div className="col-span-full text-center py-12 text-muted-foreground">No products found</div>
+            <div className="col-span-full text-center py-12 text-muted-foreground">
+              {search ? `No products found for "${search}"` : 'No products found'}
+            </div>
           ) : filteredProducts.map(p => {
             const stock = getStockInBaseUnits(p);
             const multiUnit = isMultiUnitEnabled(p as any);

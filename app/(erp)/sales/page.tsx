@@ -5,9 +5,10 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle, Printer, DollarSign, Send, CreditCard, ChevronDown, UserPlus } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle, Printer, DollarSign, Send, CreditCard, UserPlus } from 'lucide-react';
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
+import ProductSearchInput from '@/components/ui/ProductSearchInput';
 
 const statusConfig: Record<InvoiceStatus, { label: string; color: string; bg: string }> = {
   draft: { label: 'Draft', color: 'text-gray-600', bg: 'bg-gray-100' },
@@ -434,10 +435,22 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     payment_method: 'cash' as PaymentMethod,
     payment_reference: '',
   });
-  const [items, setItems] = useState<{ product_id: string; quantity: number; unit_price: number; discount_percent: number; selected_unit?: ProductUnit; base_quantity: number }[]>([]);
+  const [items, setItems] = useState<{
+    product_id: string;
+    product_name: string;
+    product_sku: string;
+    product_unit?: string;
+    product_base_unit?: string;
+    stock_qty: number | null;
+    quantity: number;
+    unit_price: number;
+    discount_percent: number;
+    selected_unit?: ProductUnit;
+    available_units?: ProductUnit[];
+    base_quantity: number;
+  }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [showUnitSelector, setShowUnitSelector] = useState<number | null>(null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [customerList, setCustomerList] = useState(customers);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
@@ -447,36 +460,46 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
       .then(({ data }) => { if (data) setPaymentMethods(data); });
   }, []);
 
-  function addItem() {
-    setItems([...items, { product_id: '', quantity: 1, unit_price: 0, discount_percent: 0, base_quantity: 1 }]);
+  function addProductToItems(product: any) {
+    const multiUnit = product.enable_multi_unit && product.units && product.units.filter((u: any) => u.is_active).length > 0;
+    const defaultUnit: ProductUnit | undefined = multiUnit ? getDefaultSaleUnit(product) : undefined;
+    const unitPrice = defaultUnit ? defaultUnit.price : (product.sale_price || 0);
+    const baseQty = defaultUnit ? convertToBaseUnit(1, defaultUnit) : 1;
+    const stock = product.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
+
+    // If same product+unit already in list, increment qty instead
+    const existingIndex = items.findIndex(
+      i => i.product_id === product.id && (i.selected_unit?.id ?? '') === (defaultUnit?.id ?? '')
+    );
+    if (existingIndex >= 0) {
+      const updated = [...items];
+      const ex = updated[existingIndex];
+      const newQty = ex.quantity + 1;
+      const newBase = ex.selected_unit ? convertToBaseUnit(newQty, ex.selected_unit) : newQty;
+      updated[existingIndex] = { ...ex, quantity: newQty, base_quantity: newBase };
+      setItems(updated);
+      return;
+    }
+
+    setItems(prev => [...prev, {
+      product_id: product.id,
+      product_name: product.name,
+      product_sku: product.sku,
+      product_unit: product.unit,
+      product_base_unit: product.base_unit,
+      stock_qty: stock,
+      quantity: 1,
+      unit_price: unitPrice,
+      discount_percent: 0,
+      selected_unit: defaultUnit,
+      available_units: multiUnit ? product.units.filter((u: any) => u.is_active) : undefined,
+      base_quantity: baseQty,
+    }]);
   }
 
   function updateItem(index: number, field: string, value: any) {
     const updated = [...items];
-    const product = products.find(p => p.id === (field === 'product_id' ? value : updated[index].product_id));
-
-    if (field === 'product_id') {
-      if (product && isMultiUnitEnabled(product)) {
-        const defaultUnit = getDefaultSaleUnit(product);
-        updated[index] = {
-          product_id: value,
-          quantity: 1,
-          unit_price: defaultUnit.price,
-          discount_percent: updated[index].discount_percent ?? 0,
-          selected_unit: defaultUnit,
-          base_quantity: convertToBaseUnit(1, defaultUnit),
-        };
-      } else if (product) {
-        updated[index] = {
-          product_id: value,
-          quantity: 1,
-          unit_price: product.sale_price,
-          discount_percent: updated[index].discount_percent ?? 0,
-          selected_unit: undefined,
-          base_quantity: 1,
-        };
-      }
-    } else if (field === 'selected_unit') {
+    if (field === 'selected_unit') {
       const unit = value as ProductUnit;
       updated[index] = {
         ...updated[index],
@@ -487,8 +510,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     } else if (field === 'quantity') {
       const qty = parseInt(value) || 1;
       const unit = updated[index].selected_unit;
-      const baseQty = unit ? convertToBaseUnit(qty, unit) : qty;
-      updated[index] = { ...updated[index], quantity: qty, base_quantity: baseQty };
+      updated[index] = { ...updated[index], quantity: qty, base_quantity: unit ? convertToBaseUnit(qty, unit) : qty };
     } else if (field === 'discount_percent') {
       updated[index] = { ...updated[index], discount_percent: Math.min(100, Math.max(0, parseFloat(value) || 0)) };
     } else {
@@ -502,8 +524,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   }
 
   const subtotal = items.reduce((sum, item) => {
-    const lineTotal = item.quantity * item.unit_price * (1 - (item.discount_percent || 0) / 100);
-    return sum + lineTotal;
+    return sum + item.quantity * item.unit_price * (1 - (item.discount_percent || 0) / 100);
   }, 0);
 
   const amountPaid = form.payment_type === 'full' ? subtotal : (form.payment_type === 'partial' ? form.amount_paid : 0);
@@ -646,8 +667,15 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium">Line Items</label>
-              <button type="button" onClick={addItem} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ Add Item</button>
+              {items.length > 0 && <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? 's' : ''}</span>}
             </div>
+            <ProductSearchInput
+              onSelect={addProductToItems}
+              showStock
+              placeholder="Search and add products..."
+              className="mb-3"
+            />
+            {items.length > 0 && (
             <div className="border border-border rounded-lg overflow-hidden">
               <table className="w-full">
                 <thead className="bg-muted/40">
@@ -661,66 +689,47 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {items.length === 0 ? (
-                    <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added. Click "Add Item" to add products.</td></tr>
-                  ) : items.map((item, index) => {
-                    const product = products.find(p => p.id === item.product_id);
-                    const multiUnit = product && isMultiUnitEnabled(product);
-                    const stockQty = (product as any)?.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
+                  {items.map((item, index) => {
                     const lineTotal = item.quantity * item.unit_price * (1 - (item.discount_percent || 0) / 100);
                     return (
                       <tr key={index}>
                         <td className="px-3 py-2">
-                          <select value={item.product_id} onChange={e => updateItem(index, 'product_id', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm focus:outline-none">
-                            <option value="">Select product</option>
-                            {products.map(p => {
-                              const pStock = (p as any)?.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
-                              return <option key={p.id} value={p.id}>{p.name} ({p.sku}){pStock !== null ? ` — Stock: ${pStock}` : ''}</option>;
-                            })}
-                          </select>
-                          {product && stockQty !== null && (
-                            <p className={`text-[10px] mt-0.5 font-medium ${stockQty > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                              {stockQty > 0 ? `${stockQty} ${product.unit || 'units'} available` : 'Out of stock'}
+                          <p className="text-sm font-medium text-foreground">{item.product_name}</p>
+                          <p className="text-[10px] text-muted-foreground">{item.product_sku}</p>
+                          {item.stock_qty !== null && (
+                            <p className={`text-[10px] font-medium ${item.stock_qty > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                              {item.stock_qty > 0 ? `${item.stock_qty} ${item.product_unit || 'units'} in stock` : 'Out of stock'}
                             </p>
                           )}
-                          {multiUnit && item.selected_unit && (
+                          {item.available_units && item.selected_unit && (
                             <div className="mt-1">
                               <select
                                 value={item.selected_unit.id}
                                 onChange={e => {
-                                  const unit = product?.units?.find(u => u.id === e.target.value);
+                                  const unit = item.available_units?.find(u => u.id === e.target.value);
                                   if (unit) updateItem(index, 'selected_unit', unit);
                                 }}
                                 className="w-full border border-blue-200 bg-blue-50 text-blue-700 rounded px-2 py-1 text-xs focus:outline-none"
                               >
-                                {product?.units?.filter(u => u.is_active).map(u => (
+                                {item.available_units.map(u => (
                                   <option key={u.id} value={u.id}>{u.unit_name} - {formatCurrency(u.price)}</option>
                                 ))}
                               </select>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">1 {item.selected_unit.unit_name} = {item.selected_unit.conversion_factor} {product?.base_unit || 'base'}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">1 {item.selected_unit.unit_name} = {item.selected_unit.conversion_factor} {item.product_base_unit || 'base'}</p>
                             </div>
                           )}
                         </td>
                         <td className="px-3 py-2">
                           <input type="number" min="1" value={item.quantity} onChange={e => updateItem(index, 'quantity', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
-                          {multiUnit && item.selected_unit && (
-                            <p className="text-[10px] text-muted-foreground text-center mt-0.5">= {item.base_quantity} {product?.base_unit || 'base'}</p>
+                          {item.available_units && item.selected_unit && (
+                            <p className="text-[10px] text-muted-foreground text-center mt-0.5">= {item.base_quantity} {item.product_base_unit || 'base'}</p>
                           )}
                         </td>
                         <td className="px-3 py-2">
                           <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.5"
-                            value={item.discount_percent || 0}
-                            onChange={e => updateItem(index, 'discount_percent', e.target.value)}
-                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none focus:border-amber-400"
-                            placeholder="0"
-                          />
+                          <input type="number" min="0" max="100" step="0.5" value={item.discount_percent || 0} onChange={e => updateItem(index, 'discount_percent', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none focus:border-amber-400" placeholder="0" />
                         </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold">
                           {formatCurrency(lineTotal)}
@@ -737,6 +746,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           <div className="flex justify-end bg-muted/30 rounded-lg p-3">
