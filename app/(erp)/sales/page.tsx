@@ -564,39 +564,6 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
     if (itemsError) { setError(itemsError.message); setSaving(false); return; }
 
-    // Update stock for each invoice item
-    for (const item of items) {
-      const product = products.find(p => p.id === item.product_id);
-      // Find inventory for this product
-      const { data: invData } = await supabase
-        .from('inventory_items')
-        .select('id, quantity_on_hand, warehouse_id')
-        .eq('product_id', item.product_id)
-        .limit(1);
-
-      if (invData && invData.length > 0) {
-        const inv = invData[0];
-        const newQty = Math.max(0, (inv.quantity_on_hand || 0) - item.base_quantity);
-        await supabase
-          .from('inventory_items')
-          .update({ quantity_on_hand: newQty, updated_at: new Date().toISOString() })
-          .eq('id', inv.id);
-
-        // Record stock movement
-        await supabase.from('stock_movements').insert({
-          product_id: item.product_id,
-          warehouse_id: inv.warehouse_id,
-          movement_type: 'sale',
-          quantity: -item.base_quantity,
-          unit_cost: item.selected_unit?.cost_price || product?.cost_price || 0,
-          reference_type: 'invoice',
-          reference_id: invoice.id,
-          reference_number: invoiceNumber,
-          notes: `Invoice sale - ${item.quantity} ${item.selected_unit?.unit_name || 'units'}`,
-        });
-      }
-    }
-
     // Record payment if full or partial
     if (amountPaid > 0) {
       const paymentNumber = `PAY-${Date.now().toString().slice(-6)}`;

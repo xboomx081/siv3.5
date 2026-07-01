@@ -227,6 +227,8 @@ export default function POSPage() {
       const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
       if (itemsError) throw itemsError;
 
+      // Stock deduction is handled by the DB trigger on invoice_items INSERT
+
       const { error: payError } = await supabase.from('payments').insert({
         payment_number: `PAY-${Date.now().toString().slice(-6)}`,
         payment_type: 'received',
@@ -239,37 +241,6 @@ export default function POSPage() {
         notes: 'POS sale',
       });
       if (payError) console.error('Payment record error:', payError.message);
-
-      for (const item of cart) {
-        if (item.inventory_item_id && item.warehouse_id) {
-          const { data: invData } = await supabase
-            .from('inventory_items')
-            .select('quantity_on_hand')
-            .eq('id', item.inventory_item_id)
-            .single();
-
-          if (invData) {
-            const newQty = Math.max(0, (invData.quantity_on_hand || 0) - item.base_quantity);
-            await supabase
-              .from('inventory_items')
-              .update({ quantity_on_hand: newQty, updated_at: new Date().toISOString() })
-              .eq('id', item.inventory_item_id);
-          }
-
-          const product = products.find(p => p.id === item.id);
-          await supabase.from('stock_movements').insert({
-            product_id: item.id,
-            warehouse_id: item.warehouse_id,
-            movement_type: 'sale',
-            quantity: -item.base_quantity,
-            unit_cost: item.selected_unit?.cost_price || product?.cost_price || 0,
-            reference_type: 'invoice',
-            reference_id: invoice.id,
-            reference_number: invoiceNumber,
-            notes: `POS sale - ${item.quantity} ${item.selected_unit?.unit_name || 'units'}`,
-          });
-        }
-      }
 
       if (customerId !== WALK_IN_CUSTOMER_ID) {
         const { data: custData } = await supabase
