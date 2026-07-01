@@ -354,14 +354,14 @@ function ReturnModal({ invoices, onClose, onSaved }: {
       const { data: accounts } = await supabase
         .from('accounts')
         .select('id, code')
-        .in('code', ['4050', '1100', '1000', '1010', '2200', '1200', '5000']);
+        .in('code', ['4050', '1100', '1001', '1010', '2200', '1200', '5000']);
 
       const getAccountId = (code: string) => accounts?.find(a => a.code === code)?.id;
 
       const salesReturnsAccountId = getAccountId('4050');
       const accountsReceivableId = getAccountId('1100');
-      const cashAccountId = getAccountId('1000');
-      const bankAccountId = getAccountId('1010');
+      const cashAccountId = getAccountId('1001'); // Cash in Hand
+      const bankAccountId = getAccountId('1010'); // Bank Account
       const customerRefundPayableId = getAccountId('2200');
       const inventoryAccountId = getAccountId('1200');
       const cogsAccountId = getAccountId('5000');
