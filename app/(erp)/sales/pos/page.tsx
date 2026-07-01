@@ -51,6 +51,7 @@ export default function POSPage() {
   const [selectedCustomer, setSelectedCustomer] = useState(WALK_IN_CUSTOMER_ID);
   const [customers, setCustomers] = useState<any[]>([]);
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
   const [discount, setDiscount] = useState(0);
   const [orderComplete, setOrderComplete] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -63,6 +64,8 @@ export default function POSPage() {
   useEffect(() => {
     loadProducts('');
     loadCustomers();
+    supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
+      .then(({ data }) => { if (data && data.length > 0) setPaymentMethods(data); });
   }, []);
 
   useEffect(() => {
@@ -282,11 +285,26 @@ export default function POSPage() {
     setTimeout(() => setOrderComplete(false), 4000);
   }
 
-  const paymentMethods = [
-    { id: 'cash', label: 'Cash', icon: Banknote, color: 'text-green-600 bg-green-50 border-green-200' },
-    { id: 'card', label: 'Card', icon: CreditCard, color: 'text-blue-600 bg-blue-50 border-blue-200' },
-    { id: 'bkash', label: 'bKash', icon: Smartphone, color: 'text-pink-600 bg-pink-50 border-pink-200' },
-    { id: 'nagad', label: 'Nagad', icon: Smartphone, color: 'text-orange-600 bg-orange-50 border-orange-200' },
+  const paymentMethodIcons: Record<string, any> = {
+    cash: Banknote,
+    bank_transfer: CreditCard,
+    card: CreditCard,
+    mobile_banking: Smartphone,
+    cheque: CreditCard,
+    other: Banknote,
+  };
+  const paymentMethodColors: Record<string, string> = {
+    cash: 'text-green-600 bg-green-50 border-green-200',
+    bank_transfer: 'text-blue-600 bg-blue-50 border-blue-200',
+    card: 'text-indigo-600 bg-indigo-50 border-indigo-200',
+    mobile_banking: 'text-pink-600 bg-pink-50 border-pink-200',
+    cheque: 'text-amber-600 bg-amber-50 border-amber-200',
+    other: 'text-gray-600 bg-gray-50 border-gray-200',
+  };
+  const displayMethods = paymentMethods.length > 0 ? paymentMethods : [
+    { code: 'cash', name: 'Cash' },
+    { code: 'card', name: 'Card' },
+    { code: 'mobile_banking', name: 'Mobile Banking' },
   ];
 
   return (
@@ -431,11 +449,15 @@ export default function POSPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-1.5">
-              {paymentMethods.map(m => (
-                <button key={m.id} onClick={() => setPaymentMethod(m.id)} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border-2 text-xs font-medium transition ${paymentMethod === m.id ? m.color + ' border-current' : 'border-border text-muted-foreground hover:border-blue-200'}`}>
-                  <m.icon className="w-3 h-3" />{m.label}
-                </button>
-              ))}
+              {displayMethods.map(m => {
+                const Icon = paymentMethodIcons[m.code] || Banknote;
+                const color = paymentMethodColors[m.code] || 'text-gray-600 bg-gray-50 border-gray-200';
+                return (
+                  <button key={m.code} onClick={() => setPaymentMethod(m.code)} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border-2 text-xs font-medium transition ${paymentMethod === m.code ? color + ' border-current' : 'border-border text-muted-foreground hover:border-blue-200'}`}>
+                    <Icon className="w-3 h-3" />{m.name}
+                  </button>
+                );
+              })}
             </div>
 
             <button

@@ -676,14 +676,26 @@ function ProductModal({ categories, brands, warehouses, product, onClose, onSave
             const diff = newQty - currentQty;
 
             if (diff !== 0) {
-              // Update inventory
-              await supabase.from('inventory_items')
-                .upsert({
+              // Try update first; if no row exists, insert
+              const { data: existingInv } = await supabase
+                .from('inventory_items')
+                .select('id')
+                .eq('product_id', productId!)
+                .eq('warehouse_id', warehouseId)
+                .maybeSingle();
+
+              if (existingInv) {
+                await supabase.from('inventory_items')
+                  .update({ quantity_on_hand: newQty, updated_at: new Date().toISOString() })
+                  .eq('id', existingInv.id);
+              } else {
+                await supabase.from('inventory_items').insert({
                   tenant_id: '00000000-0000-0000-0000-000000000001',
                   product_id: productId,
                   warehouse_id: warehouseId,
                   quantity_on_hand: newQty,
-                }, { onConflict: 'product_id,warehouse_id' });
+                });
+              }
 
               // Record movement
               await supabase.from('stock_movements').insert({
