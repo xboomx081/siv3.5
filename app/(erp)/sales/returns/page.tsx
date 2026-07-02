@@ -380,9 +380,24 @@ function ReturnModal({ invoices, onClose, onSaved }: {
         .maybeSingle();
       const warehouseId = warehouse?.id || '11000000-0000-0000-0000-000000000001';
 
-      // Get current user (if authenticated)
-      const { data: { user } } = await supabase.auth.getUser();
-      const createdBy = user?.id || null;
+      // Get current user (if authenticated and exists in profiles)
+      let createdBy: string | null = null;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.id) {
+          // Verify the user exists in profiles table
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (profile) {
+            createdBy = user.id;
+          }
+        }
+      } catch {
+        // Auth not available, continue without created_by
+      }
 
       // Get selected payment method details
       const selectedMethod = paymentMethods.find(m => m.id === selectedPaymentMethod);
@@ -523,20 +538,24 @@ function ReturnModal({ invoices, onClose, onSaved }: {
       }
 
       // Create sales_return record
+      const salesReturnData: any = {
+        return_number: returnNumber,
+        invoice_id: selectedInvoice.id,
+        customer_id: selectedInvoice.customer_id,
+        return_date: new Date().toISOString().split('T')[0],
+        total_refund_amount: totalRefundAmount,
+        refund_method: selectedMethod?.code || 'store_credit',
+        status: 'completed',
+        journal_entry_id: journalEntry.id,
+        payment_id: paymentId
+      };
+      if (createdBy) {
+        salesReturnData.created_by = createdBy;
+      }
+
       const { data: salesReturn, error: returnError } = await supabase
         .from('sales_returns')
-        .insert({
-          return_number: returnNumber,
-          invoice_id: selectedInvoice.id,
-          customer_id: selectedInvoice.customer_id,
-          return_date: new Date().toISOString().split('T')[0],
-          total_refund_amount: totalRefundAmount,
-          refund_method: selectedMethod?.code || 'store_credit',
-          status: 'completed',
-          journal_entry_id: journalEntry.id,
-          payment_id: paymentId,
-          created_by: createdBy
-        })
+        .insert(salesReturnData)
         .select('id')
         .single();
 
