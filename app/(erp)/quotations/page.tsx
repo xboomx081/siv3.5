@@ -41,7 +41,7 @@ export default function QuotationsPage() {
   async function loadData() {
     setLoading(true);
     const [quoteRes, custRes, prodRes, settingsRes] = await Promise.all([
-      supabase.from('quotations').select('*, customer:customers(name, code)').order('created_at', { ascending: false }),
+      supabase.from('quotations').select('*, customer:customers(name, code, phone, address)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
       supabase.from('app_settings').select('*').limit(1).maybeSingle(),
@@ -835,6 +835,8 @@ function ViewQuotationModal({ quotation, items, onClose, onConvert, companySetti
             customer={{
               name: quotation.customer?.name || '—',
               code: quotation.customer?.code,
+              phone: (quotation.customer as any)?.phone,
+              address: (quotation.customer as any)?.address,
             }}
             items={items.map((item: any) => ({
               product_name: item.product?.name || '—',

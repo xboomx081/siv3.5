@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Plus, Search, MapPin, Clock, CheckCircle2, XCircle, Package, Truck, X, Edit } from 'lucide-react';
-import type { Delivery, DeliveryStatus, Customer, Invoice } from '@/lib/types';
+import { Plus, Search, MapPin, Clock, CircleCheck as CheckCircle2, Circle as XCircle, Package, Truck, X, CreditCard as Edit, Printer, FileText } from 'lucide-react';
+import DeliveryChallan from '@/components/DeliveryChallan';
+import type { Delivery, DeliveryStatus, Customer } from '@/lib/types';
 
 const statusConfig: Record<DeliveryStatus, { label: string; color: string; bg: string; icon: React.ElementType }> = {
   pending: { label: 'Pending', color: 'text-gray-600', bg: 'bg-gray-100', icon: Clock },
@@ -18,28 +19,77 @@ const statusConfig: Record<DeliveryStatus, { label: string; color: string; bg: s
 
 interface DeliveryWithCustomer extends Omit<Delivery, 'customer'> {
   customer?: { name: string; phone: string; address: string };
+  invoice?: { invoice_number: string };
 }
 
 export default function DeliveryPage() {
   const [deliveries, setDeliveries] = useState<DeliveryWithCustomer[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [companySettings, setCompanySettings] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingDelivery, setEditingDelivery] = useState<DeliveryWithCustomer | null>(null);
+  const [challanDelivery, setChallanDelivery] = useState<DeliveryWithCustomer | null>(null);
+  const [challanItems, setChallanItems] = useState<any[]>([]);
+  const [challanLoading, setChallanLoading] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    const [delRes, custRes] = await Promise.all([
-      supabase.from('deliveries').select('*, customer:customers(name, phone, address)').order('created_at', { ascending: false }),
+    const [delRes, custRes, invRes, settingsRes] = await Promise.all([
+      supabase.from('deliveries').select('*, customer:customers(name, phone, address), invoice:invoices(invoice_number)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
+      supabase.from('invoices').select('id, invoice_number, customer_id, status').order('created_at', { ascending: false }).limit(500),
+      supabase.from('app_settings').select('*').limit(1).maybeSingle(),
     ]);
     setDeliveries(delRes.data || []);
     setCustomers(custRes.data || []);
+    setInvoices(invRes.data || []);
+    setCompanySettings(settingsRes.data || {});
     setLoading(false);
+  }
+
+  async function viewChallan(delivery: DeliveryWithCustomer) {
+    setChallanDelivery(delivery);
+    setChallanLoading(true);
+    setChallanItems([]);
+
+    if (delivery.invoice_id) {
+      const { data: invItems } = await supabase
+        .from('invoice_items')
+        .select('quantity, unit_name, product:products(name, sku)')
+        .eq('invoice_id', delivery.invoice_id);
+
+      if (invItems && invItems.length > 0) {
+        setChallanItems(invItems.map((item: any) => ({
+          product_name: item.product?.name || '—',
+          product_sku: item.product?.sku,
+          quantity: Number(item.quantity),
+          delivered_quantity: Number(item.quantity),
+          unit_name: item.unit_name,
+        })));
+      }
+    } else {
+      const { data: delItems } = await supabase
+        .from('delivery_items')
+        .select('quantity, delivered_quantity, unit_name, product:products(name, sku)')
+        .eq('delivery_id', delivery.id);
+
+      if (delItems && delItems.length > 0) {
+        setChallanItems(delItems.map((item: any) => ({
+          product_name: item.product?.name || '—',
+          product_sku: item.product?.sku,
+          quantity: Number(item.quantity),
+          delivered_quantity: Number(item.delivered_quantity ?? item.quantity),
+          unit_name: item.unit_name,
+        })));
+      }
+    }
+    setChallanLoading(false);
   }
 
   async function updateStatus(deliveryId: string, newStatus: DeliveryStatus) {
@@ -138,7 +188,12 @@ export default function DeliveryPage() {
                 const Icon = cfg.icon;
                 return (
                   <tr key={d.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3"><span className="text-sm font-semibold text-blue-600">{d.delivery_number}</span></td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm font-semibold text-blue-600">{d.delivery_number}</span>
+                      {d.invoice?.invoice_number && (
+                        <span className="block text-xs text-muted-foreground">Invoice: {d.invoice.invoice_number}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <div>
                         <p className="text-sm font-semibold text-foreground">{d.customer?.name || '-'}</p>
@@ -163,6 +218,7 @@ export default function DeliveryPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => viewChallan(d)} title="View Challan" className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition"><Printer className="w-3.5 h-3.5" /></button>
                         <button onClick={() => setEditingDelivery(d)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition"><Edit className="w-3.5 h-3.5" /></button>
                         <select
                           value={d.status}
@@ -185,6 +241,7 @@ export default function DeliveryPage() {
       {showCreateModal && (
         <DeliveryModal
           customers={customers}
+          invoices={invoices}
           onClose={() => setShowCreateModal(false)}
           onSaved={loadData}
         />
@@ -192,17 +249,63 @@ export default function DeliveryPage() {
       {editingDelivery && (
         <DeliveryModal
           customers={customers}
+          invoices={invoices}
           delivery={editingDelivery}
           onClose={() => setEditingDelivery(null)}
           onSaved={loadData}
         />
       )}
+
+      {/* Delivery Challan Print Modal */}
+      {challanDelivery && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="print-modal bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="no-print flex items-center justify-between px-6 py-3 border-b border-border sticky top-0 bg-white z-10">
+              <span className="text-sm font-semibold text-muted-foreground">Delivery Challan Preview</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                  <Printer className="w-3.5 h-3.5" />Print / PDF
+                </button>
+                <button onClick={() => setChallanDelivery(null)} className="text-muted-foreground hover:text-foreground p-1"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            <div className="p-8">
+              {challanLoading ? (
+                <div className="space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-6 bg-muted rounded animate-pulse" />)}</div>
+              ) : (
+                <DeliveryChallan
+                  challanNumber={challanDelivery.delivery_number}
+                  deliveryDate={challanDelivery.delivery_date || undefined}
+                  invoiceNumber={challanDelivery.invoice?.invoice_number}
+                  company={{
+                    name: companySettings.name || 'Your Company',
+                    address: companySettings.address,
+                    phone: companySettings.phone,
+                    email: companySettings.email,
+                    logo_url: companySettings.logo_url,
+                  }}
+                  customer={{
+                    name: challanDelivery.customer?.name || '—',
+                    phone: challanDelivery.customer?.phone,
+                    address: challanDelivery.customer?.address || challanDelivery.delivery_address || undefined,
+                    city: challanDelivery.delivery_city || undefined,
+                  }}
+                  items={challanItems}
+                  vehicleNumber={challanDelivery.vehicle_number || undefined}
+                  notes={(challanDelivery as any).notes}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function DeliveryModal({ customers, delivery, onClose, onSaved }: {
+function DeliveryModal({ customers, invoices, delivery, onClose, onSaved }: {
   customers: Customer[];
+  invoices: any[];
   delivery?: DeliveryWithCustomer | null;
   onClose: () => void;
   onSaved: () => void;
@@ -210,14 +313,28 @@ function DeliveryModal({ customers, delivery, onClose, onSaved }: {
   const isEdit = !!delivery;
   const [form, setForm] = useState({
     customer_id: delivery?.customer_id || '',
+    invoice_id: delivery?.invoice_id || '',
     delivery_date: delivery?.delivery_date || '',
     delivery_address: delivery?.delivery_address || '',
     delivery_city: delivery?.delivery_city || '',
     vehicle_number: delivery?.vehicle_number || '',
-    notes: '',
+    notes: (delivery as any)?.notes || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [linkedInvoice, setLinkedInvoice] = useState<any>(null);
+
+  useEffect(() => {
+    if (form.invoice_id) {
+      const inv = invoices.find(i => i.id === form.invoice_id);
+      setLinkedInvoice(inv || null);
+      if (inv && !form.customer_id) {
+        setForm(prev => ({ ...prev, customer_id: inv.customer_id }));
+      }
+    } else {
+      setLinkedInvoice(null);
+    }
+  }, [form.invoice_id]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -228,18 +345,40 @@ function DeliveryModal({ customers, delivery, onClose, onSaved }: {
     const data = {
       delivery_number: deliveryNumber,
       customer_id: form.customer_id || null,
+      invoice_id: form.invoice_id || null,
       delivery_date: form.delivery_date || null,
       delivery_address: form.delivery_address || null,
       delivery_city: form.delivery_city || null,
       vehicle_number: form.vehicle_number || null,
+      notes: form.notes || null,
       status: (isEdit ? delivery.status : 'pending') as 'pending' | 'assigned' | 'in_transit' | 'delivered' | 'failed' | 'returned',
     };
 
-    const { error } = isEdit
-      ? await supabase.from('deliveries').update(data).eq('id', delivery!.id)
-      : await supabase.from('deliveries').insert(data);
+    const { data: savedData, error } = isEdit
+      ? await supabase.from('deliveries').update(data).eq('id', delivery!.id).select('id')
+      : await supabase.from('deliveries').insert(data).select('id');
 
     if (error) { setError(error.message); setSaving(false); return; }
+
+    // If linked to an invoice, copy invoice items to delivery_items
+    if (form.invoice_id && savedData && savedData[0]) {
+      const deliveryId = savedData[0].id;
+      const { data: invItems } = await supabase
+        .from('invoice_items')
+        .select('product_id, quantity, unit_name')
+        .eq('invoice_id', form.invoice_id);
+
+      if (invItems && invItems.length > 0) {
+        const delItems = invItems.map((item: any) => ({
+          delivery_id: deliveryId,
+          product_id: item.product_id,
+          quantity: Number(item.quantity),
+          delivered_quantity: Number(item.quantity),
+          unit_name: item.unit_name,
+        }));
+        await supabase.from('delivery_items').insert(delItems);
+      }
+    }
 
     toast({ title: 'Success', description: isEdit ? 'Delivery updated successfully' : 'Delivery created successfully' });
     onSaved();
@@ -255,6 +394,26 @@ function DeliveryModal({ customers, delivery, onClose, onSaved }: {
         </div>
         <form onSubmit={handleSave} className="p-6 space-y-4">
           {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+          {/* Link to Invoice */}
+          <div>
+            <label className="block text-xs font-medium mb-1 flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" /> Link to Invoice (optional)
+            </label>
+            <select
+              value={form.invoice_id}
+              onChange={e => setForm({ ...form, invoice_id: e.target.value })}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            >
+              <option value="">No linked invoice</option>
+              {invoices.map(inv => (
+                <option key={inv.id} value={inv.id}>{inv.invoice_number} ({inv.status})</option>
+              ))}
+            </select>
+            {linkedInvoice && (
+              <p className="text-xs text-blue-600 mt-1">Items from this invoice will be auto-filled in the delivery challan.</p>
+            )}
+          </div>
 
           <div>
             <label className="block text-xs font-medium mb-1">Customer</label>
@@ -291,6 +450,11 @@ function DeliveryModal({ customers, delivery, onClose, onSaved }: {
           <div>
             <label className="block text-xs font-medium mb-1">City</label>
             <input value={form.delivery_city} onChange={e => setForm({ ...form, delivery_city: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium mb-1">Notes</label>
+            <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="Delivery instructions..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">

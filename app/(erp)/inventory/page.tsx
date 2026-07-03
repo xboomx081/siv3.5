@@ -63,8 +63,24 @@ export default function InventoryPage() {
 
   async function loadData() {
     setLoading(true);
-    const [prodRes, catRes, brandRes, invRes, whRes, colorRes, sizeRes] = await Promise.all([
-      supabase.from('products').select('*, category:categories(name), brand:brands(name), product_colors(id, name, hex_code), product_sizes(id, name)').order('created_at', { ascending: false }),
+
+    // Supabase caps queries at 1000 rows by default. Paginate to fetch all products.
+    let allProds: any[] = [];
+    let page = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*, category:categories(name), brand:brands(name), product_colors(id, name, hex_code), product_sizes(id, name)')
+        .order('created_at', { ascending: false })
+        .range(page * PAGE, (page + 1) * PAGE - 1);
+      if (error) break;
+      allProds = allProds.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      page++;
+    }
+
+    const [catRes, brandRes, invRes, whRes, colorRes, sizeRes] = await Promise.all([
       supabase.from('categories').select('*').eq('is_active', true),
       supabase.from('brands').select('*').eq('is_active', true),
       supabase.from('inventory_items').select('product_id, warehouse_id, quantity_on_hand'),
@@ -81,7 +97,7 @@ export default function InventoryPage() {
       byWarehouse[i.product_id][i.warehouse_id] = Number(i.quantity_on_hand);
     });
 
-    const prods = (prodRes.data || []).map((p: any) => ({
+    const prods = allProds.map((p: any) => ({
       ...p,
       total_stock: stockMap[p.id] || 0,
       stock_by_warehouse: Object.entries(byWarehouse[p.id] || {}).map(([warehouse_id, quantity]) => ({
