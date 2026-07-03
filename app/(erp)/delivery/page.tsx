@@ -44,12 +44,12 @@ export default function DeliveryPage() {
       supabase.from('deliveries').select('*, customer:customers(name, phone, address), invoice:invoices(invoice_number)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('invoices').select('id, invoice_number, customer_id, status').order('created_at', { ascending: false }).limit(500),
-      supabase.from('app_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle(),
     ]);
     setDeliveries(delRes.data || []);
     setCustomers(custRes.data || []);
     setInvoices(invRes.data || []);
-    setCompanySettings(settingsRes.data || {});
+    setCompanySettings(settingsRes.data?.setting_value || {});
     setLoading(false);
   }
 

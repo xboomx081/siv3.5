@@ -49,7 +49,7 @@ export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState(WALK_IN_CUSTOMER_ID);
+  const [selectedCustomer, setSelectedCustomer] = useState('');
   const [customers, setCustomers] = useState<any[]>([]);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
@@ -198,14 +198,15 @@ export default function POSPage() {
   const total = subtotal - discountAmount;
 
   async function processOrder() {
-    if (cart.length === 0) return;
+    if (cart.length === 0) { toast({ title: 'Cart is empty', variant: 'destructive' }); return; }
+    if (!selectedCustomer) { toast({ title: 'Please select a customer first', variant: 'destructive' }); return; }
     setProcessing(true);
 
     try {
       const invoiceNumber = `POS-${Date.now().toString().slice(-8)}`;
       setLastInvoiceNumber(invoiceNumber);
 
-      const customerId = selectedCustomer || WALK_IN_CUSTOMER_ID;
+      const customerId = selectedCustomer;
 
       const { data: invoice, error: invError } = await supabase
         .from('invoices')
@@ -275,7 +276,7 @@ export default function POSPage() {
 
       setCart([]);
       setDiscount(0);
-      setSelectedCustomer(WALK_IN_CUSTOMER_ID);
+      setSelectedCustomer('');
       setOrderComplete(true);
       toast({ title: 'Success', description: `Order ${invoiceNumber} completed successfully` });
       loadProducts(search);
@@ -333,7 +334,7 @@ export default function POSPage() {
           </button>
           <div className="flex items-center gap-2">
             <select value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)} className="border border-border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none min-w-[180px]">
-              <option value={WALK_IN_CUSTOMER_ID}>Walk-in Customer</option>
+              <option value="">Select Customer</option>
               {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
             </select>
             <button
@@ -465,7 +466,7 @@ export default function POSPage() {
 
             <button
               onClick={processOrder}
-              disabled={processing}
+              disabled={processing || !selectedCustomer}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition disabled:opacity-60 text-sm"
             >
               {processing ? 'Processing...' : `Charge ${formatCurrency(total)}`}

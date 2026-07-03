@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight, UserPlus, CreditCard, DollarSign, CircleCheck as CheckCircle, Printer } from 'lucide-react';
+import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight, UserPlus, CreditCard, DollarSign, CircleCheck as CheckCircle, Printer, Share2, MessageCircle, Mail } from 'lucide-react';
 import type { Quotation, QuotationStatus, Customer, Product } from '@/lib/types';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
 import PrintTemplate from '@/components/PrintTemplate';
@@ -41,15 +41,15 @@ export default function QuotationsPage() {
   async function loadData() {
     setLoading(true);
     const [quoteRes, custRes, prodRes, settingsRes] = await Promise.all([
-      supabase.from('quotations').select('*, customer:customers(name, code, phone, address)').order('created_at', { ascending: false }),
+      supabase.from('quotations').select('*, customer:customers(name, code, phone, email, address)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('app_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle(),
     ]);
     setQuotations(quoteRes.data || []);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);
-    setCompanySettings(settingsRes.data || {});
+    setCompanySettings(settingsRes.data?.setting_value || {});
     setLoading(false);
   }
 
@@ -623,6 +623,9 @@ function ConvertToInvoiceModal({ quotation, onClose, onConverted }: {
         discount_percent: item.discount_percent || 0,
         tax_rate: item.tax_rate || 0,
         subtotal: item.subtotal,
+        unit_name: (item as any).unit_name || null,
+        unit_conversion_factor: (item as any).unit_conversion_factor || null,
+        base_quantity: (item as any).base_quantity || item.quantity,
       }));
       await supabase.from('invoice_items').insert(invoiceItems);
     }
@@ -805,13 +808,52 @@ function ViewQuotationModal({ quotation, items, onClose, onConvert, companySetti
 }) {
   const cfg = statusConfig[quotation.status as QuotationStatus] || statusConfig.draft;
 
+  function buildShareText() {
+    const lines = [
+      `*QUOTATION ${quotation.quote_number}*`,
+      `From: ${companySettings?.name || 'Our Company'}`,
+      `Date: ${formatDate(quotation.issue_date)}`,
+      `Valid Until: ${quotation.expiry_date ? formatDate(quotation.expiry_date) : 'N/A'}`,
+      '',
+      'Items:',
+      ...items.map((item: any, i: number) => `${i + 1}. ${item.product?.name || 'Item'} — Qty: ${item.quantity} ${item.unit_name || ''} — ${formatCurrency(item.subtotal)}`),
+      '',
+      `Total: ${formatCurrency(quotation.total_amount)}`,
+      '',
+      'Thank you for your interest!',
+    ];
+    return lines.join('\n');
+  }
+
+  function shareWhatsApp() {
+    const phone = (quotation.customer as any)?.phone?.replace(/[^0-9]/g, '');
+    const text = encodeURIComponent(buildShareText());
+    const url = phone
+      ? `https://wa.me/${phone}?text=${text}`
+      : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank');
+  }
+
+  function shareEmail() {
+    const email = (quotation.customer as any)?.email || '';
+    const subject = encodeURIComponent(`Quotation ${quotation.quote_number} from ${companySettings?.name || 'Our Company'}`);
+    const body = encodeURIComponent(buildShareText());
+    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="print-modal bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="no-print flex items-center justify-between px-6 py-3 border-b border-border sticky top-0 bg-white z-10">
           <span className="text-sm font-semibold text-muted-foreground">Quotation Preview</span>
           <div className="flex items-center gap-2">
-            <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+            <button onClick={shareWhatsApp} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition">
+              <MessageCircle className="w-3.5 h-3.5" />WhatsApp
+            </button>
+            <button onClick={shareEmail} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+              <Mail className="w-3.5 h-3.5" />Email
+            </button>
+            <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-sm font-medium transition">
               <Printer className="w-3.5 h-3.5" />Print / PDF
             </button>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1"><X className="w-5 h-5" /></button>
