@@ -3,156 +3,265 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
-import { TrendingUp, TrendingDown, DollarSign, Calendar, Download, Printer, RefreshCw } from 'lucide-react';
+import { Calendar, Download, Printer, RefreshCw, Building2 } from 'lucide-react';
 
 interface PnLData {
+  // Revenue
   salesRevenue: number;
-  salesReturns: number;
-  netSalesRevenue: number;
-  otherRevenue: number;
+  serviceRevenue: number;
   totalRevenue: number;
-  costOfGoodsSold: number;
+
+  // COGS components
+  openingInventory: number;
+  purchases: number;
+  freightIn: number;
+  closingInventory: number;
+  totalCOGS: number;
+
+  // Profit levels
   grossProfit: number;
-  operatingExpenses: number;
-  totalExpenses: number;
+
+  // Operating expenses
+  operatingExpenses: { name: string; amount: number }[];
+  totalOperatingExpenses: number;
+  operatingProfit: number;
+
+  // Other income/expenses
+  otherIncome: number;
+  otherExpenses: number;
+  netOtherIncome: number;
+
+  // Final
+  profitBeforeTax: number;
+  incomeTaxExpense: number;
   netProfit: number;
 }
 
 export default function PLPage() {
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<'month' | 'quarter' | 'year'>('month');
+  const [periodLabel, setPeriodLabel] = useState('');
+
   const [data, setData] = useState<PnLData>({
     salesRevenue: 0,
-    salesReturns: 0,
-    netSalesRevenue: 0,
-    otherRevenue: 0,
+    serviceRevenue: 0,
     totalRevenue: 0,
-    costOfGoodsSold: 0,
+    openingInventory: 0,
+    purchases: 0,
+    freightIn: 0,
+    closingInventory: 0,
+    totalCOGS: 0,
     grossProfit: 0,
-    operatingExpenses: 0,
-    totalExpenses: 0,
+    operatingExpenses: [],
+    totalOperatingExpenses: 0,
+    operatingProfit: 0,
+    otherIncome: 0,
+    otherExpenses: 0,
+    netOtherIncome: 0,
+    profitBeforeTax: 0,
+    incomeTaxExpense: 0,
     netProfit: 0,
   });
-  const [period, setPeriod] = useState<'month' | 'quarter' | 'year'>('month');
-  const [revenueBreakdown, setRevenueBreakdown] = useState<{ name: string; amount: number }[]>([]);
-  const [expenseBreakdown, setExpenseBreakdown] = useState<{ name: string; amount: number }[]>([]);
-  const [salesReturns, setSalesReturns] = useState(0);
 
-  useEffect(() => { loadData(); }, [period]);
+  const [companySettings, setCompanySettings] = useState({ name: 'SI Building Solutions.', address: '' });
+
+  useEffect(() => { loadData(); loadSettings(); }, [period]);
+
+  async function loadSettings() {
+    const { data } = await supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle();
+    if (data?.setting_value) {
+      setCompanySettings(prev => ({ ...prev, ...data.setting_value }));
+    }
+  }
 
   async function loadData() {
     setLoading(true);
 
     const now = new Date();
     let startDate: string;
+    let endDate: string;
+    let label: string;
 
     if (period === 'month') {
       startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      label = `For the Month Ended ${new Date(now.getFullYear(), now.getMonth() + 1, 0).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
     } else if (period === 'quarter') {
       const quarterStart = Math.floor(now.getMonth() / 3) * 3;
       startDate = new Date(now.getFullYear(), quarterStart, 1).toISOString().split('T')[0];
+      endDate = new Date(now.getFullYear(), quarterStart + 3, 0).toISOString().split('T')[0];
+      const quarterNum = Math.floor(now.getMonth() / 3) + 1;
+      label = `For the Quarter Ended ${new Date(now.getFullYear(), quarterStart + 3, 0).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
     } else {
       startDate = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
+      endDate = new Date(now.getFullYear(), 11, 31).toISOString().split('T')[0];
+      label = `For the Year Ended December 31, ${now.getFullYear()}`;
     }
 
-    const endDate = now.toISOString().split('T')[0];
+    setPeriodLabel(label);
 
-    const [invoicesRes, returnsRes, stockMovementsRes, accountsRes] = await Promise.all([
+    // Fetch all data in parallel
+    const [
+      invoicesRes, stockMovementsRes, accountsRes, inventoryItemsRes,
+      purchaseOrdersRes, journalEntriesRes
+    ] = await Promise.all([
       supabase.from('invoices').select('total_amount').gte('invoice_date', startDate).lte('invoice_date', endDate).neq('status', 'cancelled'),
-      supabase.from('sales_returns').select('total_refund_amount').gte('created_at', startDate).lte('created_at', endDate),
-      supabase.from('stock_movements').select('quantity, unit_cost').eq('movement_type', 'sale').gte('created_at', startDate).lte('created_at', endDate),
+      supabase.from('stock_movements').select('quantity, unit_cost, movement_type, created_at').gte('created_at', startDate).lte('created_at', endDate),
       supabase.from('accounts').select('id, code, name, account_type, balance'),
+      supabase.from('inventory_items').select('quantity_on_hand, product:products(cost_price)'),
+      supabase.from('purchase_orders').select('total_amount, status').gte('order_date', startDate).lte('order_date', endDate),
+      supabase.from('journal_entries').select('id, entry_date').gte('entry_date', startDate).lte('entry_date', endDate),
     ]);
 
+    // Calculate sales revenue
     const salesRevenue = (invoicesRes.data || []).reduce((sum, inv) => sum + Number(inv.total_amount), 0);
-    const salesReturnsTotal = (returnsRes.data || []).reduce((sum, r) => sum + Number(r.total_refund_amount || 0), 0);
-    const netSalesRevenue = salesRevenue - salesReturnsTotal;
-    const costOfGoodsSold = (stockMovementsRes.data || []).reduce((sum, m) => sum + (Math.abs(Number(m.quantity)) * Number(m.unit_cost || 0)), 0);
 
-    setSalesReturns(salesReturnsTotal);
+    // Calculate COGS components
+    // Opening inventory = total inventory value at period start
+    const openingInventory = (inventoryItemsRes.data || []).reduce((sum: number, item: any) => {
+      return sum + (Number(item.quantity_on_hand) * Number(item.product?.cost_price || 0));
+    }, 0);
 
-    const expenseAccounts = (accountsRes.data || []).filter(a => a.account_type === 'expense' || a.account_type === 'cost_of_sales');
+    // Purchases in period
+    const purchases = (purchaseOrdersRes.data || []).filter(po => po.status !== 'cancelled').reduce((sum, po) => sum + Number(po.total_amount || 0), 0);
 
-    let operatingExpenses = 0;
-    const expBreakdown: { name: string; amount: number }[] = [];
+    // Freight in - get from journal entries if tracked
+    let freightIn = 0;
+    const freightAccount = (accountsRes.data || []).find(a => a.name.toLowerCase().includes('freight'));
+    if (freightAccount) {
+      const { data: freightLines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', freightAccount.id);
+      freightIn = (freightLines || []).reduce((s, l) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+    }
+
+    // Closing inventory = use same as opening for now (simplified)
+    const closingInventory = openingInventory;
+
+    // COGS calculation: Opening + Purchases + Freight - Closing
+    const totalCOGS = openingInventory + purchases + freightIn - closingInventory;
+
+    // Alternative: Calculate COGS from actual stock movements
+    const cogsFromMovements = (stockMovementsRes.data || [])
+      .filter(m => m.movement_type === 'sale')
+      .reduce((sum, m) => sum + (Math.abs(Number(m.quantity)) * Number(m.unit_cost || 0)), 0);
+
+    // Use movements-based COGS as it's more accurate
+    const actualCOGS = cogsFromMovements > 0 ? cogsFromMovements : totalCOGS;
+
+    // Service revenue (other operating revenue)
+    let serviceRevenue = 0;
+    const revenueAccounts = (accountsRes.data || []).filter(a =>
+      a.account_type === 'revenue' && a.code !== '4000' && a.code !== '4100'
+    );
+    for (const acc of revenueAccounts) {
+      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
+      const netCredit = (lines || []).reduce((s, l) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
+      if (netCredit > 0) serviceRevenue += netCredit;
+    }
+
+    const totalRevenue = salesRevenue + serviceRevenue;
+    const grossProfit = totalRevenue - actualCOGS;
+
+    // Operating expenses
+    const expenseAccounts = (accountsRes.data || []).filter(a => a.account_type === 'expense');
+    const operatingExpenses: { name: string; amount: number }[] = [];
+    let totalOperatingExpenses = 0;
 
     for (const acc of expenseAccounts) {
-      const { data: lines } = await supabase
-        .from('journal_lines')
-        .select('debit, credit')
-        .eq('account_id', acc.id);
-
-      const debitSum = (lines || []).reduce((s, l) => s + Number(l.debit || 0), 0);
-      const creditSum = (lines || []).reduce((s, l) => s + Number(l.credit || 0), 0);
-      const net = debitSum - creditSum;
-
-      if (net > 0) {
-        operatingExpenses += net;
-        expBreakdown.push({ name: acc.name, amount: net });
-      }
-    }
-    setExpenseBreakdown(expBreakdown);
-
-    const revenueAccounts = (accountsRes.data || []).filter(a => a.account_type === 'revenue');
-    let otherRevenue = 0;
-    const revBreakdown: { name: string; amount: number }[] = [];
-
-    for (const acc of revenueAccounts) {
-      if (acc.code === '4000') continue;
-
-      const { data: lines } = await supabase
-        .from('journal_lines')
-        .select('debit, credit')
-        .eq('account_id', acc.id);
-
-      const creditSum = (lines || []).reduce((s, l) => s + Number(l.credit || 0), 0);
-      const debitSum = (lines || []).reduce((s, l) => s + Number(l.debit || 0), 0);
-      const net = creditSum - debitSum;
-
-      if (net > 0) {
-        otherRevenue += net;
-        revBreakdown.push({ name: acc.name, amount: net });
+      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
+      const netDebit = (lines || []).reduce((s, l) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+      if (netDebit > 0) {
+        operatingExpenses.push({ name: acc.name, amount: netDebit });
+        totalOperatingExpenses += netDebit;
       }
     }
 
-    if (netSalesRevenue > 0) {
-      revBreakdown.unshift({ name: 'Net Sales Revenue', amount: netSalesRevenue });
-    }
-    setRevenueBreakdown(revBreakdown);
+    const operatingProfit = grossProfit - totalOperatingExpenses;
 
-    const totalRevenue = netSalesRevenue + otherRevenue;
-    const grossProfit = totalRevenue - costOfGoodsSold;
-    const netProfit = grossProfit - operatingExpenses;
+    // Other income/expenses
+    let otherIncome = 0;
+    let otherExpenses = 0;
+    const otherIncomeAccounts = (accountsRes.data || []).filter(a => a.account_type === 'other_income');
+    const otherExpenseAccounts = (accountsRes.data || []).filter(a => a.account_type === 'other_expense');
+
+    for (const acc of otherIncomeAccounts) {
+      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
+      const net = (lines || []).reduce((s, l) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
+      if (net > 0) otherIncome += net;
+    }
+
+    for (const acc of otherExpenseAccounts) {
+      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
+      const net = (lines || []).reduce((s, l) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+      if (net > 0) otherExpenses += net;
+    }
+
+    const netOtherIncome = otherIncome - otherExpenses;
+    const profitBeforeTax = operatingProfit + netOtherIncome;
+
+    // Income tax (estimate 20% if positive)
+    const incomeTaxExpense = profitBeforeTax > 0 ? profitBeforeTax * 0.20 : 0;
+    const netProfit = profitBeforeTax - incomeTaxExpense;
 
     setData({
       salesRevenue,
-      salesReturns: salesReturnsTotal,
-      netSalesRevenue,
-      otherRevenue,
+      serviceRevenue,
       totalRevenue,
-      costOfGoodsSold,
+      openingInventory,
+      purchases: purchases,
+      freightIn,
+      closingInventory,
+      totalCOGS: actualCOGS,
       grossProfit,
       operatingExpenses,
-      totalExpenses: operatingExpenses,
+      totalOperatingExpenses,
+      operatingProfit,
+      otherIncome,
+      otherExpenses,
+      netOtherIncome,
+      profitBeforeTax,
+      incomeTaxExpense,
       netProfit,
     });
 
     setLoading(false);
   }
 
-  const grossMargin = data.totalRevenue > 0 ? ((data.grossProfit / data.totalRevenue) * 100).toFixed(1) : '0.0';
-  const netMargin = data.totalRevenue > 0 ? ((data.netProfit / data.totalRevenue) * 100).toFixed(1) : '0.0';
-
   function exportToCSV() {
-    const csv = `Item,Amount
-Sales Revenue,${data.salesRevenue}
-Less: Sales Returns,(${data.salesReturns})
-Net Sales Revenue,${data.netSalesRevenue}
-Other Revenue,${data.otherRevenue}
-Total Revenue,${data.totalRevenue}
-Cost of Goods Sold,(${data.costOfGoodsSold})
-Gross Profit,${data.grossProfit}
-Operating Expenses,(${data.operatingExpenses})
-Net Profit,${data.netProfit}`;
+    const rows = [
+      ['PROFIT & LOSS STATEMENT'],
+      [periodLabel],
+      [''],
+      ['REVENUE'],
+      ['Sales Revenue', data.salesRevenue],
+      ['Service Revenue', data.serviceRevenue],
+      ['Total Revenue', data.totalRevenue],
+      [''],
+      ['COST OF GOODS SOLD (COGS)'],
+      ['Opening Inventory', data.openingInventory],
+      ['Purchases', data.purchases],
+      ['Freight In', data.freightIn],
+      ['Less: Closing Inventory', -data.closingInventory],
+      ['Total COGS', data.totalCOGS],
+      [''],
+      ['GROSS PROFIT', data.grossProfit],
+      [''],
+      ['OPERATING EXPENSES'],
+      ...data.operatingExpenses.map(e => [e.name, e.amount]),
+      ['Total Operating Expenses', data.totalOperatingExpenses],
+      [''],
+      ['OPERATING PROFIT', data.operatingProfit],
+      [''],
+      ['OTHER INCOME / EXPENSES'],
+      ['Interest Income', data.otherIncome],
+      ['Interest Expense', -data.otherExpenses],
+      ['Net Other Income', data.netOtherIncome],
+      [''],
+      ['Profit Before Tax', data.profitBeforeTax],
+      ['Income Tax Expense', -data.incomeTaxExpense],
+      [''],
+      ['NET PROFIT', data.netProfit],
+    ];
+    const csv = rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -166,12 +275,19 @@ Net Profit,${data.netProfit}`;
     window.print();
   }
 
+  function formatMoney(amount: number, showParens = false): string {
+    const formatted = formatCurrency(Math.abs(amount));
+    if (amount < 0) return `(${formatted.replace('৳', '').trim()})`;
+    return formatted;
+  }
+
   return (
     <div className="space-y-5 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Controls */}
+      <div className="flex items-center justify-between flex-wrap gap-3 print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Profit & Loss Statement</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">Financial performance summary</p>
+          <p className="text-muted-foreground text-sm mt-0.5">Standard accounting format</p>
         </div>
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-muted-foreground" />
@@ -192,143 +308,152 @@ Net Profit,${data.netProfit}`;
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="stat-card">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-muted-foreground">Net Revenue</p>
-            <DollarSign className="w-4 h-4 text-blue-500" />
+      {/* P&L Statement Document */}
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm max-w-3xl mx-auto print:shadow-none print:border-none">
+        {/* Header */}
+        <div className="text-center py-6 border-b border-gray-200">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Building2 className="w-5 h-5 text-gray-600" />
+            <h2 className="text-lg font-bold text-gray-900 tracking-wide">{companySettings.name}</h2>
           </div>
-          <p className="text-2xl font-bold text-foreground">{formatCurrency(data.totalRevenue)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Total income</p>
-        </div>
-        <div className="stat-card">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-muted-foreground">Gross Profit</p>
-            <TrendingUp className="w-4 h-4 text-green-500" />
-          </div>
-          <p className="text-2xl font-bold text-green-600">{formatCurrency(data.grossProfit)}</p>
-          <p className={`text-xs font-medium mt-1 ${parseFloat(grossMargin) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{grossMargin}% margin</p>
-        </div>
-        <div className="stat-card">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-muted-foreground">Operating Expenses</p>
-            <TrendingDown className="w-4 h-4 text-red-500" />
-          </div>
-          <p className="text-2xl font-bold text-red-600">{formatCurrency(data.operatingExpenses)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Total expenses</p>
-        </div>
-        <div className="stat-card">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-muted-foreground">Net Profit</p>
-            {data.netProfit >= 0 ? <TrendingUp className="w-4 h-4 text-green-500" /> : <TrendingDown className="w-4 h-4 text-red-500" />}
-          </div>
-          <p className={`text-2xl font-bold ${data.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(data.netProfit)}</p>
-          <p className={`text-xs font-medium mt-1 ${parseFloat(netMargin) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{netMargin}% margin</p>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden max-w-3xl mx-auto">
-        <div className="px-6 py-4 bg-gradient-to-r from-slate-700 to-slate-800">
-          <h3 className="text-lg font-bold text-white">Profit & Loss Statement</h3>
-          <p className="text-slate-300 text-sm">For the period: {period === 'month' ? 'This Month' : period === 'quarter' ? 'This Quarter' : 'This Year'}</p>
+          <h3 className="text-base font-semibold text-gray-800 mt-2">PROFIT & LOSS STATEMENT</h3>
+          <p className="text-sm text-gray-500 mt-1">{periodLabel}</p>
         </div>
 
         {loading ? (
-          <div className="px-6 py-8 text-center text-muted-foreground text-sm">Loading financial data...</div>
+          <div className="px-8 py-12 text-center text-gray-400">Loading financial data...</div>
         ) : (
-          <>
-            {/* Revenue Section */}
-            <div className="px-6 py-3 bg-green-50 border-b border-border">
-              <h4 className="text-sm font-bold text-green-700 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4" /> Revenue
-              </h4>
-            </div>
-
-            <div className="divide-y divide-border">
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-muted/20">
-                <span className="text-sm text-foreground">Gross Sales Revenue</span>
-                <span className="text-sm font-semibold text-green-600">{formatCurrency(data.salesRevenue)}</span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3 hover:bg-muted/20">
-                <span className="text-sm text-foreground pl-4">Less: Sales Returns & Allowances</span>
-                <span className="text-sm font-semibold text-red-600">({formatCurrency(data.salesReturns)})</span>
-              </div>
-              <div className="flex items-center justify-between px-6 py-3 bg-green-50/50 font-medium">
-                <span className="text-sm text-foreground">Net Sales Revenue</span>
-                <span className="text-sm font-bold text-green-700">{formatCurrency(data.netSalesRevenue)}</span>
-              </div>
-
-              {data.otherRevenue > 0 && (
-                <div className="flex items-center justify-between px-6 py-3 hover:bg-muted/20">
-                  <span className="text-sm text-foreground">Other Revenue</span>
-                  <span className="text-sm font-semibold text-green-600">{formatCurrency(data.otherRevenue)}</span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between px-6 py-3 bg-green-100 border-y border-border font-bold">
-              <span className="text-sm text-green-800">Total Revenue</span>
-              <span className="text-sm text-green-800">{formatCurrency(data.totalRevenue)}</span>
-            </div>
+          <div className="px-6 py-4">
+            {/* REVENUE Section */}
+            <SectionHeader title="REVENUE" />
+            <table className="w-full text-sm">
+              <tbody>
+                <StatementRow label="Sales Revenue" amount={data.salesRevenue} />
+                <StatementRow label="Service Revenue" amount={data.serviceRevenue} />
+                <TotalRow label="Total Revenue" amount={data.totalRevenue} variant="blue" />
+              </tbody>
+            </table>
 
             {/* COGS Section */}
-            <div className="px-6 py-3 bg-orange-50 border-b border-border">
-              <h4 className="text-sm font-bold text-orange-700">Cost of Goods Sold</h4>
+            <SectionHeader title="COST OF GOODS SOLD (COGS)" className="mt-4" />
+            <table className="w-full text-sm">
+              <tbody>
+                <StatementRow label="Opening Inventory" amount={data.openingInventory} />
+                <StatementRow label="Purchases" amount={data.purchases} />
+                <StatementRow label="Freight In" amount={data.freightIn} />
+                <StatementRow label="Less: Closing Inventory" amount={-data.closingInventory} isDeduction />
+                <TotalRow label="Total COGS" amount={data.totalCOGS} variant="orange" />
+              </tbody>
+            </table>
+
+            {/* GROSS PROFIT */}
+            <ProfitRow label="GROSS PROFIT" amount={data.grossProfit} />
+
+            {/* OPERATING EXPENSES Section */}
+            <SectionHeader title="OPERATING EXPENSES" className="mt-4" />
+            <table className="w-full text-sm">
+              <tbody>
+                {data.operatingExpenses.length > 0 ? (
+                  data.operatingExpenses.map((exp, i) => (
+                    <StatementRow key={i} label={exp.name} amount={exp.amount} />
+                  ))
+                ) : (
+                  <StatementRow label="No operating expenses recorded" amount={0} />
+                )}
+                <TotalRow label="Total Operating Expenses" amount={data.totalOperatingExpenses} variant="orange" />
+              </tbody>
+            </table>
+
+            {/* OPERATING PROFIT */}
+            <ProfitRow label="OPERATING PROFIT" amount={data.operatingProfit} />
+
+            {/* OTHER INCOME/EXPENSES Section */}
+            <SectionHeader title="OTHER INCOME / EXPENSES" className="mt-4" />
+            <table className="w-full text-sm">
+              <tbody>
+                <StatementRow label="Interest Income" amount={data.otherIncome} />
+                <StatementRow label="Interest Expense" amount={-data.otherExpenses} isDeduction />
+                <TotalRow label="Net Other Income" amount={data.netOtherIncome} variant="blue" />
+              </tbody>
+            </table>
+
+            {/* Profit Before Tax */}
+            <div className="flex justify-between items-center py-3 px-4 bg-gray-50 border-y border-gray-200 mt-2">
+              <span className="text-sm font-semibold text-gray-700">Profit Before Tax</span>
+              <span className="text-sm font-bold text-gray-800">{formatMoney(data.profitBeforeTax)}</span>
             </div>
 
-            <div className="flex items-center justify-between px-6 py-3 hover:bg-muted/20 border-b border-border">
-              <span className="text-sm text-foreground">Cost of Goods Sold</span>
-              <span className="text-sm font-semibold text-red-600">({formatCurrency(data.costOfGoodsSold)})</span>
+            {/* Income Tax */}
+            <div className="flex justify-between items-center py-2 px-4">
+              <span className="text-sm text-gray-600">Income Tax Expense</span>
+              <span className="text-sm text-red-600">({formatCurrency(data.incomeTaxExpense).replace('৳', '').trim()})</span>
             </div>
 
-            <div className="flex items-center justify-between px-6 py-4 bg-blue-50 font-bold">
-              <span className="text-sm text-blue-800">Gross Profit ({grossMargin}%)</span>
-              <span className="text-sm text-blue-800">{formatCurrency(data.grossProfit)}</span>
+            {/* NET PROFIT */}
+            <div className={`flex justify-between items-center py-4 px-4 mt-2 rounded-lg ${data.netProfit >= 0 ? 'bg-green-600' : 'bg-red-600'}`}>
+              <span className="text-base font-bold text-white tracking-wide">NET PROFIT</span>
+              <span className="text-xl font-bold text-white">{formatCurrency(data.netProfit)}</span>
             </div>
-
-            {/* Expenses Section */}
-            <div className="px-6 py-3 bg-red-50 border-b border-border">
-              <h4 className="text-sm font-bold text-red-700 flex items-center gap-2">
-                <TrendingDown className="w-4 h-4" /> Operating Expenses
-              </h4>
-            </div>
-
-            {expenseBreakdown.length > 0 ? (
-              <div className="divide-y divide-border">
-                {expenseBreakdown.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between px-6 py-3 hover:bg-muted/20">
-                    <span className="text-sm text-foreground">{item.name}</span>
-                    <span className="text-sm font-semibold text-red-600">({formatCurrency(item.amount)})</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="px-6 py-4 text-center text-muted-foreground text-sm border-b border-border">
-                No operating expenses recorded
-              </div>
-            )}
-
-            <div className="flex items-center justify-between px-6 py-3 bg-red-50/50 font-medium border-b border-border">
-              <span className="text-sm text-red-800">Total Operating Expenses</span>
-              <span className="text-sm font-semibold text-red-700">({formatCurrency(data.operatingExpenses)})</span>
-            </div>
-
-            {/* Net Profit */}
-            <div className={`px-6 py-5 ${data.netProfit >= 0 ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-red-600 to-red-700'}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-white/80">Net Profit</p>
-                  <p className="text-3xl font-bold text-white">{formatCurrency(data.netProfit)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-white">{netMargin}%</p>
-                  <p className="text-sm text-white/80">net margin</p>
-                </div>
-              </div>
-            </div>
-          </>
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Component: Section Header
+function SectionHeader({ title, className = '' }: { title: string; className?: string }) {
+  return (
+    <div className={`py-2 px-4 bg-blue-50 border-b border-t border-gray-200 ${className}`}>
+      <h4 className="text-xs font-bold text-blue-700 tracking-wide">{title}</h4>
+    </div>
+  );
+}
+
+// Component: Statement Row
+function StatementRow({ label, amount, isDeduction = false }: { label: string; amount: number; isDeduction?: boolean }) {
+  const displayAmount = amount < 0 || isDeduction;
+  const absAmount = Math.abs(amount);
+
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50/50">
+      <td className="py-2.5 pl-4 text-gray-700">{label}</td>
+      <td className="py-2.5 pr-4 text-right font-medium tabular-nums">
+        {displayAmount ? (
+          <span className="text-red-600">({formatCurrency(absAmount).replace('৳', '').trim()})</span>
+        ) : (
+          <span className="text-gray-800">{formatCurrency(absAmount)}</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// Component: Total Row
+function TotalRow({ label, amount, variant }: { label: string; amount: number; variant: 'blue' | 'orange' }) {
+  const bgClass = variant === 'blue' ? 'bg-blue-100' : 'bg-orange-50';
+  const textClass = variant === 'blue' ? 'text-blue-800' : 'text-orange-800';
+
+  return (
+    <tr className={`${bgClass} border-b border-gray-200`}>
+      <td className="py-2.5 pl-4 font-semibold text-gray-800">{label}</td>
+      <td className="py-2.5 pr-4 text-right font-bold tabular-nums">
+        <span className={textClass}>{formatCurrency(amount)}</span>
+      </td>
+    </tr>
+  );
+}
+
+// Component: Profit Row (highlighted)
+function ProfitRow({ label, amount }: { label: string; amount: number }) {
+  const isPositive = amount >= 0;
+
+  return (
+    <div className={`flex justify-between items-center py-3 px-4 mt-3 rounded-lg ${isPositive ? 'bg-green-100 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+      <span className="text-sm font-bold text-gray-800 tracking-wide">{label}</span>
+      <span className={`text-lg font-bold tabular-nums ${isPositive ? 'text-green-700' : 'text-red-700'}`}>
+        {formatCurrency(amount)}
+      </span>
     </div>
   );
 }

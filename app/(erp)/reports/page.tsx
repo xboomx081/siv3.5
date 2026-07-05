@@ -473,59 +473,67 @@ export default function ReportsPage() {
           )}
 
           {activeTab === 'pl' && (
-            <div className="bg-white rounded-xl border border-border p-6 shadow-sm max-w-3xl mx-auto">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-foreground">Profit & Loss Statement</h3>
-                <Link href="/reports/pl" className="text-xs text-blue-600 hover:underline flex items-center gap-1">Detailed P&L <ArrowRight className="w-3 h-3" /></Link>
+            <div className="bg-white rounded-xl border border-border shadow-sm max-w-3xl mx-auto overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-700 to-slate-800">
+                <h3 className="text-lg font-bold text-white">Profit & Loss Statement</h3>
+                <Link href="/reports/pl" className="text-xs text-blue-300 hover:text-white hover:underline flex items-center gap-1">Full Statement <ArrowRight className="w-3 h-3" /></Link>
               </div>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4 border-b border-border pb-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Gross Revenue</p>
-                    <p className="text-2xl font-bold text-green-600">{formatCurrency(stats.totalRevenue)}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{stats.totalOrders} orders this period</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Cost of Goods Sold</p>
-                    <p className="text-2xl font-bold text-red-600">({formatCurrency(stats.cogsActual)})</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{stats.totalRevenue > 0 ? ((stats.cogsActual / stats.totalRevenue) * 100).toFixed(1) : 0}% of revenue</p>
-                  </div>
-                </div>
-                <div className="border-b border-border pb-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Gross Profit</p>
-                      <p className="text-xl font-bold text-blue-600">{formatCurrency(stats.grossProfit)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-blue-600">{stats.totalRevenue > 0 ? ((stats.grossProfit / stats.totalRevenue) * 100).toFixed(1) : 0}%</p>
-                      <p className="text-xs text-muted-foreground">gross margin</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="border-b border-border pb-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Operating Expenses (Est.)</p>
-                      <p className="text-lg font-bold text-red-600">({formatCurrency(stats.grossProfit * 0.15)})</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">~15% of gross profit</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground mb-1">Net Profit (Est.)</p>
-                      <p className="text-3xl font-bold text-green-600">{formatCurrency(stats.netProfit)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xl font-bold text-green-600">{stats.totalRevenue > 0 ? ((stats.netProfit / stats.totalRevenue) * 100).toFixed(1) : 0}%</p>
-                      <p className="text-xs text-muted-foreground">net margin</p>
-                    </div>
-                  </div>
-                </div>
+
+              {/* Revenue Section */}
+              <div className="px-6 py-2 bg-blue-50 border-b border-border">
+                <span className="text-xs font-bold text-blue-700 tracking-wide">REVENUE</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-700">Sales Revenue</span>
+                <span className="text-sm font-medium text-gray-800">{formatCurrency(stats.totalRevenue)}</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 bg-blue-50 border-b border-border">
+                <span className="text-sm font-semibold text-gray-800">Total Revenue</span>
+                <span className="text-sm font-bold text-blue-800">{formatCurrency(stats.totalRevenue)}</span>
+              </div>
+
+              {/* COGS Section */}
+              <div className="px-6 py-2 bg-orange-50 border-b border-border">
+                <span className="text-xs font-bold text-orange-700 tracking-wide">COST OF GOODS SOLD (COGS)</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-700">Cost of Goods Sold</span>
+                <span className="text-sm font-medium text-red-600">({formatCurrency(stats.cogsActual)})</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 bg-orange-50 border-b border-border">
+                <span className="text-sm font-semibold text-gray-800">Total COGS</span>
+                <span className="text-sm font-bold text-orange-800">({formatCurrency(stats.cogsActual)})</span>
+              </div>
+
+              {/* Gross Profit */}
+              <div className="flex justify-between items-center px-6 py-3 bg-green-100 border-b border-border">
+                <span className="text-sm font-bold text-gray-800">GROSS PROFIT</span>
+                <span className="text-lg font-bold text-green-700">{formatCurrency(stats.grossProfit)}</span>
+              </div>
+
+              {/* Operating Expenses */}
+              <div className="px-6 py-2 bg-red-50 border-b border-border">
+                <span className="text-xs font-bold text-red-700 tracking-wide">OPERATING EXPENSES</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 border-b border-gray-100">
+                <span className="text-sm text-gray-700">Operating Expenses (Est.)</span>
+                <span className="text-sm font-medium text-red-600">({formatCurrency(stats.grossProfit * 0.15)})</span>
+              </div>
+              <div className="flex justify-between items-center px-6 py-2 bg-red-50 border-b border-border">
+                <span className="text-sm font-semibold text-gray-800">Total Operating Expenses</span>
+                <span className="text-sm font-bold text-red-800">({formatCurrency(stats.grossProfit * 0.15)})</span>
+              </div>
+
+              {/* Operating Profit */}
+              <div className="flex justify-between items-center px-6 py-3 bg-green-50 border-b border-border">
+                <span className="text-sm font-bold text-gray-800">OPERATING PROFIT</span>
+                <span className="text-lg font-bold text-green-700">{formatCurrency(stats.grossProfit * 0.85)}</span>
+              </div>
+
+              {/* Net Profit */}
+              <div className="flex justify-between items-center px-6 py-4 bg-green-600">
+                <span className="text-base font-bold text-white tracking-wide">NET PROFIT</span>
+                <span className="text-2xl font-bold text-white">{formatCurrency(stats.netProfit)}</span>
               </div>
             </div>
           )}
