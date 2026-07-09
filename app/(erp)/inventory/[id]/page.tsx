@@ -1,14 +1,14 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Package, TrendingUp, TrendingDown, ShoppingCart, ShoppingBag, Truck, RotateCcw, Boxes, DollarSign, ChartBar as BarChart3, Warehouse, Calendar, CircleAlert as AlertCircle, CircleArrowUp as ArrowUpCircle, CircleArrowDown as ArrowDownCircle, Eye, FileText } from 'lucide-react';
 
-export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function ProductDetailPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const router = useRouter();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
